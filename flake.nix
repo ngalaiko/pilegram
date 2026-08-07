@@ -7,6 +7,12 @@
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      # The package (FOD-pinned node_modules + wrapper) is only ever built and
+      # deployed on Linux — the exe.dev image and CI cover x86_64/aarch64-linux.
+      # Local dev on macOS uses the devShell (`nix develop` + `bun install`), which
+      # needs no pinned hash, so we don't build/pin the darwin packages.
+      linuxSystems = [ "aarch64-linux" "x86_64-linux" ];
+      forLinux = f: nixpkgs.lib.genAttrs linuxSystems (system: f (import nixpkgs { inherit system; }));
     in
     {
       # Runtime tools the gateway shells out to for voice (§7):
@@ -34,7 +40,7 @@
       # onnxruntime-node dylib resolves at runtime (unlike `bun build --compile`,
       # which drops the sibling libonnxruntime dylib). The app runs via `bun run`
       # with ffmpeg + whisper.cpp wrapped onto PATH. `nix run` works from anywhere.
-      packages = forAll (pkgs:
+      packages = forLinux (pkgs:
         let
           nodeModules = pkgs.stdenv.mkDerivation {
             pname = "pilegram-node-modules";
@@ -53,7 +59,14 @@
             dontFixup = true;
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-PpF7rO6XBmkMA6SCeVnh+pnkk/l6dwgMMzstxDP3rY4=";
+            # Per-system: node_modules carries platform-specific native optional deps
+            # (bun installs only the host's — e.g. @mariozechner/clipboard-<os>-<cpu>,
+            # pulled in by pi-coding-agent), so the tree, and thus this FOD's hash,
+            # legitimately differs per system. One hash per entry in `linuxSystems`.
+            outputHash = {
+              aarch64-linux = "sha256-eQ2bTig+2NQOJ7+GJpVoANc14+0nwq5/cMYa4s3/IMk=";
+              x86_64-linux = "sha256-VkzkAui11dqgfgXeUAwhxFvzujCrf/72yZORFWqKONE=";
+            }.${pkgs.stdenv.hostPlatform.system};
           };
         in
         {
