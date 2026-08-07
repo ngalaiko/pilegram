@@ -80,7 +80,13 @@
             installPhase = ''
               mkdir -p "$out/libexec/pilegram"
               cp -R src vendor package.json bun.lock "$out/libexec/pilegram/"
-              ln -s ${nodeModules} "$out/libexec/pilegram/node_modules"
+              # Copy node_modules as a real dir rather than symlinking the FOD. bun
+              # resolves ESM bare imports via the importing module's realpath; a
+              # symlink into the store resolves to a dir not named "node_modules", so
+              # the walk-up misses hoisted top-level deps (e.g. pi-coding-agent's
+              # `import { minimatch } from "minimatch"` → ENOENT). A real node_modules
+              # here makes realpath == logical, so ESM and CJS both resolve.
+              cp -R ${nodeModules} "$out/libexec/pilegram/node_modules"
               # onnxruntime-node's prebuilt binding (dlopen'd for Supertonic TTS) needs
               # the C++ runtime: its DT_NEEDED lists libstdc++.so.6 and libgcc_s.so.1,
               # which aren't on a Nix host's default loader path, so dlopen fails with
