@@ -81,9 +81,16 @@
               mkdir -p "$out/libexec/pilegram"
               cp -R src vendor package.json bun.lock "$out/libexec/pilegram/"
               ln -s ${nodeModules} "$out/libexec/pilegram/node_modules"
+              # onnxruntime-node's prebuilt binding (dlopen'd for Supertonic TTS) needs
+              # the C++ runtime: its DT_NEEDED lists libstdc++.so.6 and libgcc_s.so.1,
+              # which aren't on a Nix host's default loader path, so dlopen fails with
+              # "libstdc++.so.6: cannot open shared object file". Put the C++ runtime on
+              # LD_LIBRARY_PATH. (The sibling libonnxruntime.so.1 resolves via the
+              # binding's own $ORIGIN RUNPATH, so it needs nothing here.)
               makeWrapper ${pkgs.bun}/bin/bun "$out/bin/pilegram" \
                 --add-flags "run $out/libexec/pilegram/src/index.ts" \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg pkgs.whisper-cpp ]}
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg pkgs.whisper-cpp ]} \
+                --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
             '';
             meta.mainProgram = "pilegram";
           };
