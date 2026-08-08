@@ -22,6 +22,11 @@ import { errFields, type Fields, log as rootLog } from "./log.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// Cap 429 retries: every op is chained on the route's tail, so an op that
+// retried forever would stall (and unboundedly queue) every later write. After
+// this many honored retry_after waits, give up and surface the error.
+const MAX_429_RETRIES = 8;
+
 export class Writer {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly log: ReturnType<typeof rootLog.child>;
@@ -55,6 +60,10 @@ export class Writer {
       } catch (e) {
         if (e instanceof GrammyError && e.error_code === 429) {
           const retryAfter = e.parameters?.retry_after ?? 1;
+          if (attempt > MAX_429_RETRIES) {
+            this.log.error("429 retry budget exhausted — dropping op", { label, attempt, retryAfter });
+            throw e;
+          }
           this.log.warn("429 — honoring retry_after", { label, retryAfter, attempt });
           await sleep(retryAfter * 1000);
           continue;
