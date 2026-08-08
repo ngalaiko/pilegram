@@ -63,6 +63,13 @@ function parseUserIds(raw: string): Set<number> {
   return new Set(ids);
 }
 
+function parsePositiveInt(raw: string | undefined, fallback: number, flag: string): number {
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`invalid ${flag}: ${JSON.stringify(raw)} (expected a positive integer)`);
+  return n;
+}
+
 /** XDG base (or its ~ fallback) + the pilegram subdir. */
 function xdgDir(envVar: string, homeFallback: string): string {
   const base = process.env[envVar]?.trim();
@@ -114,6 +121,14 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     process.exit(2);
   }
 
+  let pollTimeoutSec: number;
+  try {
+    pollTimeoutSec = parsePositiveInt(str("poll-timeout"), 30, "--poll-timeout");
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n\n${USAGE}`);
+    process.exit(2);
+  }
+
   const stateDir = resolve(str("state-dir") ?? xdgDir("XDG_CONFIG_HOME", ".config"));
   const modelsDir = resolve(str("models-dir") ?? xdgDir("XDG_CACHE_HOME", ".cache"));
   const level = str("log-level") ?? "info";
@@ -124,7 +139,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     stateDir,
     dbPath: resolve(str("db-path") ?? join(stateDir, "pilegram.db")),
     modelsDir,
-    pollTimeoutSec: Number(str("poll-timeout") ?? "30"),
+    pollTimeoutSec,
     whisperModel: str("whisper-model") ?? "large-v3-turbo",
     supertonicVoice: str("voice") ?? "M1",
     timeZone: str("tz") ?? "Europe/Stockholm",
