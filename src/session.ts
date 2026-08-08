@@ -242,6 +242,7 @@ export class Session {
 
   dispose() {
     this.unsubscribe();
+    this.renderer.stop(); // clear heartbeat/chat-action/flush timers if a turn was live
     this.agent.dispose();
   }
 }

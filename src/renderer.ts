@@ -248,6 +248,16 @@ export class Renderer {
     return body + status;
   }
 
+  /**
+   * Stop all timers and mark idle. Called when the owning Session is disposed
+   * (e.g. its topic is closed) so a turn that was still running can't keep
+   * firing the heartbeat / chat-action intervals against a dead route forever.
+   */
+  stop() {
+    this.clearTimers();
+    this.running = false;
+  }
+
   private clearTimers() {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
