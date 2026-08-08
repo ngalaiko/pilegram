@@ -190,6 +190,11 @@ export class Gateway {
       if (msg.forum_topic_edited.name) this.router.setName(route, msg.forum_topic_edited.name);
       return;
     }
+    if (msg.forum_topic_closed) {
+      // Free the live session; it resumes from its session file if reopened.
+      this.router.suspend(route);
+      return;
+    }
 
     // --- albums: buffer by media_group_id and flush once (§9) ---
     if (!isEdit && msg.media_group_id && (msg.photo || msg.document)) {

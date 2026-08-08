@@ -203,6 +203,20 @@ export class Router {
     if (s) s.setName(name);
   }
 
+  /**
+   * Drop the in-memory session (e.g. its topic was closed) without ending the
+   * route. It rebuilds and resumes from its persisted session file the next time
+   * a message or scheduled task arrives, so context is preserved on reopen.
+   */
+  suspend(route: Route) {
+    const key = routeKey(route);
+    const s = this.sessions.get(key);
+    if (!s) return;
+    s.dispose();
+    this.sessions.delete(key);
+    log.info("session suspended (topic closed)", { route: key });
+  }
+
   /** End a route (/end or topic deleted): dispose + mark ended. */
   endRoute(route: Route) {
     const key = routeKey(route);
