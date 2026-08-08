@@ -60,6 +60,7 @@ export interface SessionOptions {
 export class Session {
   private busy = false;
   private voiceMode = false;
+  private spokeThisTurn = false; // set if the agent sent a voice note via tg_send_voice this turn
   private readonly unsubscribe: () => void;
   private readonly log: ReturnType<typeof rootLog.child>;
   private readonly onFinalized?: (text: string | undefined) => void;
@@ -139,6 +140,7 @@ export class Session {
   private onEvent(event: Parameters<Parameters<PiSession["subscribe"]>[0]>[0]) {
     switch (event.type) {
       case "agent_start":
+        this.spokeThisTurn = false;
         this.renderer.onAgentStart();
         break;
       case "message_update": {
@@ -150,6 +152,7 @@ export class Session {
       case "tool_execution_start": {
         // tg_send_* → a media chat action ("uploading…"); other tg_* (react/ask) → nothing.
         // Non-tg tools → the in-draft "🔧 …" status line.
+        if (event.toolName === "tg_send_voice") this.spokeThisTurn = true; // don't also auto-speak
         const media = MEDIA_ACTION[event.toolName];
         if (media) this.renderer.setMediaAction(media);
         else if (!event.toolName.startsWith("tg_")) this.renderer.onToolStart(event.toolName, event.args);
@@ -170,8 +173,9 @@ export class Session {
         // record it as the last-rendered answer, or reconcile would suppress the
         // legitimate text repost if we crash before the voice note is sent.
         this.onFinalized?.(this.voiceMode ? undefined : finalText);
-        // Voice mode: speak the answer as a voice note.
-        if (this.voiceMode && this.voice && finalText && finalText.trim() !== "") void this.speak(finalText);
+        // Voice mode: speak the answer as a voice note — unless the agent already
+        // sent one itself via tg_send_voice, which would double up.
+        if (this.voiceMode && this.voice && !this.spokeThisTurn && finalText && finalText.trim() !== "") void this.speak(finalText);
         break;
       }
       default:
