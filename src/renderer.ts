@@ -136,7 +136,7 @@ export class Renderer {
     this.scheduleFlush();
   }
 
-  /** Reflect the steering/follow-up queue depth in the draft (§12). */
+  /** Reflect the steering queue depth in the draft (§12). */
   setQueueDepth(n: number) {
     this.queueDepth = n;
     if (this.running) this.scheduleFlush();

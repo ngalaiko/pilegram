@@ -14,8 +14,7 @@ A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegra
   come back as voice notes synthesized with **Supertonic** (in-process ONNX). Text
   always available as a fallback.
 - **Reactions**: the agent can react to your messages instead of replying in text.
-- **Steering**: a message sent mid-turn is injected into the running turn; prefix
-  with `>` to queue it as a follow-up instead.
+- **Steering**: a message sent mid-turn is injected into the running turn.
 - **Rich inbound handling**: replies/quotes, forwards, edited messages, stickers,
   locations, contacts, polls, dice.
 

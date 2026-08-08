@@ -4,7 +4,7 @@
  *
  * Key design choice: prompts are fired *without* awaiting the turn, so the
  * gateway's poll loop never blocks on a running agent — that's what keeps
- * steering/follow-up (a message arriving mid-turn) possible (plan §12).
+ * steering (a message arriving mid-turn) possible (plan §12).
  *
  * M2: a Session either opens an existing pi session file (resume, preserving
  * context across restarts) or creates a fresh one; `onFinalized` lets the
@@ -163,7 +163,7 @@ export class Session {
         this.renderer.onToolEnd();
         break;
       case "queue_update":
-        this.renderer.setQueueDepth(event.steering.length + event.followUp.length);
+        this.renderer.setQueueDepth(event.steering.length);
         break;
       case "agent_settled": {
         const finalText = this.agent.getLastAssistantText();
@@ -187,22 +187,17 @@ export class Session {
    * Route an inbound prompt (§12):
    *  - idle → prompt (react 👀)
    *  - running → steer into the current turn (react ⚡)
-   *  - followUp (">") → queue until the agent fully stops (react 👀)
    *
    * `speak` sets the reply modality for the turn: true → voice-only reply
    * (matches a voice message in), false → normal text reply.
    */
-  async handlePrompt(text: string, opts?: { images?: ImageContent[]; messageId?: number; followUp?: boolean; speak?: boolean }) {
+  async handlePrompt(text: string, opts?: { images?: ImageContent[]; messageId?: number; speak?: boolean }) {
     const images = opts?.images;
     if (opts?.messageId !== undefined) {
       if (this.turn) this.turn.messageId = opts.messageId; // for tg_react
       this.messageLog?.add(opts.messageId, "user", text); // for the context-injected id table
     }
 
-    if (opts?.followUp) {
-      await this.agent.followUp(text, images);
-      return;
-    }
     if (this.busy) {
       this.log.info("steering into running turn");
       await this.agent.steer(text, images);
@@ -212,7 +207,7 @@ export class Session {
     this.voiceMode = opts?.speak ?? false; // reply modality matches the input
     this.renderer.setVoiceMode(this.voiceMode);
     // Do NOT await: the turn streams via the event subscription; the poll loop
-    // must stay free to deliver steering/follow-up messages.
+    // must stay free to deliver steering messages.
     void this.agent
       .prompt(text, images ? { images } : undefined)
       .catch((e) => {

@@ -211,9 +211,7 @@ export class Gateway {
         await session.abort();
         return;
       }
-      const followUp = trimmed.startsWith(">"); // ">" → queue as a follow-up (§12)
-      const body = followUp ? trimmed.slice(1).trim() : msg.text;
-      await session.handlePrompt(prefix + body, { messageId: msg.message_id, followUp });
+      await session.handlePrompt(prefix + msg.text, { messageId: msg.message_id });
       return;
     }
 
