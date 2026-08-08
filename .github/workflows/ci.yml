@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  check:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-26.05
+
+      - name: Install dependencies
+        run: nix shell nixpkgs#bun -c bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: nix shell nixpkgs#bun -c bun run typecheck
+
+      - name: Test
+        run: nix shell nixpkgs#bun -c bun run test
+
+      - name: Build package
+        run: nix build .#default

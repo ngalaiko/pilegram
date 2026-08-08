@@ -20,6 +20,7 @@ import { downloadTelegramFile, type ImageContent, toImageContent } from "./media
 import { QuestionRegistry, renderQuestionKeyboard } from "./questions.ts";
 import type { Route } from "./route.ts";
 import { Router } from "./router.ts";
+import { Scheduler } from "./scheduler.ts";
 import type { Session } from "./session.ts";
 import { Voice } from "./voice.ts";
 
@@ -36,6 +37,7 @@ export class Gateway {
 
   private readonly questions = new QuestionRegistry();
   private readonly voice: Voice;
+  private readonly scheduler: Scheduler;
 
   constructor(
     private readonly config: Config,
@@ -44,6 +46,8 @@ export class Gateway {
     this.bot = new Bot(config.botToken);
     this.voice = new Voice({ modelsDir: config.modelsDir, whisperModel: config.whisperModel, supertonicVoice: config.supertonicVoice });
     this.router = new Router(this.bot.api, config, db, this.questions, this.voice);
+    this.scheduler = new Scheduler(this.bot.api, config, db, this.router);
+    this.router.setScheduler(this.scheduler);
   }
 
   async start() {
@@ -59,6 +63,7 @@ export class Gateway {
 
     await this.registerCommands();
     this.router.restore();
+    this.scheduler.start();
     void this.voice.warmup(); // fetch models in the background so voice is ready
 
     this.running = true;
@@ -404,6 +409,7 @@ export class Gateway {
     log.info("stopping gateway");
     this.running = false;
     // Abort the in-flight long-poll so we don't block up to pollTimeoutSec.
+    this.scheduler.stop();
     this.abort?.abort();
     await this.loopDone.catch(() => {});
     this.router.disposeAll();
