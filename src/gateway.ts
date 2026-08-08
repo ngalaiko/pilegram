@@ -282,7 +282,7 @@ export class Gateway {
       const msg = e instanceof Error ? e.message : String(e);
       log.warn("media ingest failed", errFields(e));
       const hint = /too large|too big|file_path/i.test(msg)
-        ? "That file is too large for the Bot API (20MB limit) — drop it into the workspace directly."
+        ? "That file is too large for the Bot API (20MB limit) — drop it into the working directory directly."
         : `Couldn't read that attachment: ${msg}`;
       await session.notify(`⚠️ ${hint}`);
     }

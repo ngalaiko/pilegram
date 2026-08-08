@@ -7,7 +7,7 @@ export interface Route {
   threadId?: number;
 }
 
-/** Stable string key for maps / workspace dir names. */
+/** Stable string key for the per-route session maps. */
 export function routeKey(route: Route): string {
   return `${route.chatId}-${route.threadId ?? 0}`;
 }

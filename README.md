@@ -6,7 +6,7 @@ A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegra
 
 - **Streaming replies** via Telegram message drafts (animated, then finalized).
 - **Topics = sessions**: each Telegram topic is its own agent session with its own
-  workspace and context; create/delete them with Telegram's native thread UI. The
+  context; create/delete them with Telegram's native thread UI. The
   agent keeps each topic's **title and icon** relevant on its own.
 - **Markdown → Telegram HTML**: headings, code, lists, tables, links render properly.
 - **Images** in (vision) & out, **documents** in (path + inlined text) & out, **albums** both ways.
@@ -98,7 +98,7 @@ flag — argv is visible in `ps`). Everything else is a **CLI flag** (`--help`):
 | Flag | Required | Default | Notes |
 |---|---|---|---|
 | `--allow <ids>` | ✅ | — | comma-separated Telegram user ids; everyone else is dropped silently |
-| `--state-dir <path>` | | `$XDG_CONFIG_HOME/pilegram` (else `~/.config/pilegram`) | SQLite db + conversation workspaces |
+| `--state-dir <path>` | | `$XDG_CONFIG_HOME/pilegram` (else `~/.config/pilegram`) | SQLite db |
 | `--models-dir <path>` | | `$XDG_CACHE_HOME/pilegram` (else `~/.cache/pilegram`) | downloaded speech models (~2 GB cache) |
 | `--db-path <path>` | | `<state-dir>/pilegram.db` | override the db path |
 | `--whisper-model <name>` | | `large-v3-turbo` | whisper.cpp ggml model (e.g. `base.en` for a fast/small English-only start) |
@@ -114,8 +114,8 @@ served; every other update is logged and dropped.
 
 The agent runs with **full trust and no approval gate** — it runs shell commands,
 reads and writes files, and sends messages on your behalf without asking. It runs
-as *your* user, with the same filesystem and network access you have: the
-per-topic workspace is a convenient default working directory, **not a sandbox**,
-and tools such as `tg_send_document` accept absolute paths. Only `--allow` ids you
+as *your* user, with the same filesystem and network access you have: its working
+directory is your home directory, **not a sandbox**, and tools such as
+`tg_send_document` accept absolute paths. Only `--allow` ids you
 trust to drive an unsandboxed agent, and run pilegram as a dedicated,
 least-privileged user (or in a container) if that reach concerns you.

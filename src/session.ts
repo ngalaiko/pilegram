@@ -27,7 +27,7 @@ import type { Writer } from "./writer.ts";
 
 type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
-// Full coding-agent toolset; the workspace is isolated per route.
+// Full coding-agent toolset; all routes share the agent's home working directory.
 const AGENT_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 
 // tg_send_* tools → the chat action shown while they run.

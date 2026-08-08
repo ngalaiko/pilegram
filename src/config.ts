@@ -3,7 +3,7 @@
  * (never argv, which is visible in `ps`). Everything else is a CLI flag.
  *
  * Two separate locations:
- *   - state dir  (--state-dir):  SQLite db + per-topic conversation workspaces.
+ *   - state dir  (--state-dir):  SQLite db (routes, media cache, scheduled tasks).
  *                                Small, worth backing up. Defaults under XDG config.
  *   - models dir (--models-dir): downloaded speech-model weights (~2GB). Large,
  *                                re-downloadable cache. Defaults under XDG cache.
@@ -19,7 +19,7 @@ export interface Config {
   botToken: string;
   /** Hard allowlist of Telegram user ids (§1). Empty is a config error. */
   allowedUserIds: Set<number>;
-  /** State: SQLite db + conversation workspaces. */
+  /** State: the SQLite db. */
   stateDir: string;
   dbPath: string;
   /** Model-weights cache (whisper + Supertonic). Separate from state. */
@@ -38,7 +38,7 @@ Secret (environment only):
 
 Options:
   --allow <ids>                comma-separated allowed Telegram user ids   [required]
-  --state-dir <path>           db + conversation workspaces   (default: $XDG_CONFIG_HOME/pilegram)
+  --state-dir <path>           SQLite db location             (default: $XDG_CONFIG_HOME/pilegram)
   --models-dir <path>          speech-model cache             (default: $XDG_CACHE_HOME/pilegram)
   --db-path <path>             override the SQLite path       (default: <state-dir>/pilegram.db)
   --whisper-model <name>       whisper.cpp ggml model         (default: large-v3-turbo)
