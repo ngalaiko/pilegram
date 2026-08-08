@@ -106,3 +106,16 @@ flag — argv is visible in `ps`). Everything else is a **CLI flag** (`--help`):
 | `--tz <zone>` | | `Europe/Stockholm` | local time shown to the agent |
 | `--poll-timeout <sec>` | | `30` | long-poll seconds |
 | `--log-level <level>` | | `info` | `debug`\|`info`\|`warn`\|`error` |
+
+## Trust model
+
+pilegram is single-user by design. Only the Telegram user ids in `--allow` are
+served; every other update is logged and dropped.
+
+The agent runs with **full trust and no approval gate** — it runs shell commands,
+reads and writes files, and sends messages on your behalf without asking. It runs
+as *your* user, with the same filesystem and network access you have: the
+per-topic workspace is a convenient default working directory, **not a sandbox**,
+and tools such as `tg_send_document` accept absolute paths. Only `--allow` ids you
+trust to drive an unsandboxed agent, and run pilegram as a dedicated,
+least-privileged user (or in a container) if that reach concerns you.
