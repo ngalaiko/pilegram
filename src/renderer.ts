@@ -189,12 +189,31 @@ export class Renderer {
       extra = undefined;
     }
     this.log.info("finalize", { chars: out.length, chunks: chunks.length, tools: total, html: !!extra });
-    for (const chunk of chunks) {
-      this.writer
-        .persist(chunk, extra)
-        .then((m) => this.onSent?.(m.message_id, chunk))
-        .catch((e) => this.log.error("finalize persist failed", errFields(e)));
-    }
+    for (const chunk of chunks) this.sendFinal(chunk, extra);
+  }
+
+  /**
+   * Persist one finalized chunk. If it was sent as HTML and Telegram rejects the
+   * entities (e.g. a `<pre>` block split across a chunk boundary, or a construct
+   * Telegram doesn't accept), re-send the chunk as readable plain text rather
+   * than dropping it — a rejected chunk would otherwise vanish from the answer.
+   */
+  private sendFinal(chunk: string, extra: { parse_mode: "HTML" } | undefined) {
+    this.writer
+      .persist(chunk, extra)
+      .then((m) => this.onSent?.(m.message_id, chunk))
+      .catch((e) => {
+        if (!extra) {
+          this.log.error("finalize persist failed", errFields(e));
+          return;
+        }
+        this.log.warn("HTML finalize rejected; retrying as plain text", errFields(e));
+        const plain = htmlToPlain(chunk);
+        this.writer
+          .persist(plain)
+          .then((m) => this.onSent?.(m.message_id, plain))
+          .catch((e2) => this.log.error("plain finalize fallback failed", errFields(e2)));
+      });
   }
 
   onError(err: unknown) {
@@ -272,6 +291,16 @@ export class Renderer {
       this.actionTimer = undefined;
     }
   }
+}
+
+/** Strip Telegram-HTML tags and unescape entities, for the plain-text fallback. */
+function htmlToPlain(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
 }
 
 /** One-line, newline-free summary of a tool call's key argument. */
