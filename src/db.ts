@@ -40,7 +40,8 @@ const MIGRATIONS: string[] = [
      kind           TEXT,
      updated_at     INTEGER NOT NULL
    );`,
-  // v4 — auto-titling: whether a topic has already been auto-named (once only).
+  // v4 — dormant: an old auto-titling flag. The heuristic was removed (the agent
+  // owns its topic title now); the column stays for migration continuity, unused.
   `ALTER TABLE routes ADD COLUMN titled INTEGER NOT NULL DEFAULT 0;`,
   // v5 — the topic's current icon emoji (for context display; set via editForumTopic).
   `ALTER TABLE routes ADD COLUMN icon TEXT;`,
@@ -71,7 +72,6 @@ export interface RouteRow {
   name: string | null;
   status: "active" | "ended";
   lastRenderedSig: string | null;
-  titled: boolean;
   icon: string | null;
 }
 
@@ -82,7 +82,6 @@ interface RouteDbRow {
   name: string | null;
   status: string;
   last_rendered_sig: string | null;
-  titled: number;
   icon: string | null;
 }
 
@@ -130,7 +129,6 @@ function toRouteRow(r: RouteDbRow): RouteRow {
     name: r.name,
     status: r.status === "ended" ? "ended" : "active",
     lastRenderedSig: r.last_rendered_sig,
-    titled: r.titled === 1,
     icon: r.icon,
   };
 }
@@ -249,10 +247,6 @@ export class Db {
   }
   setRouteLastRenderedSig(chatId: number, threadId: number, sig: string) {
     this.updateRoute(chatId, threadId, "last_rendered_sig", sig);
-  }
-
-  markRouteTitled(chatId: number, threadId: number) {
-    this.db.query("UPDATE routes SET titled = 1, updated_at = ? WHERE chat_id = ? AND thread_id = ?").run(Date.now(), chatId, threadId);
   }
 
   // ---- scheduled tasks ----
