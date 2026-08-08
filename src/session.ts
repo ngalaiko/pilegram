@@ -95,9 +95,19 @@ export class Session {
       ? SessionManager.open(opts.sessionFile)
       : SessionManager.create(opts.workspaceDir);
     const customNames = (opts.customTools ?? []).map((t) => t.name);
+    // Installed pi extensions register their tools at load time, but `tools` is a
+    // hard allowlist — any name it omits is dropped, so without this the agent
+    // can never call anything an installed extension provides (its hooks still
+    // run; only its tools were being filtered out). Enumerate them from the
+    // already-reloaded resource loader and allow them through, per docs/sdk.md:
+    // "If you pass `tools`, include each custom or extension tool name you want
+    // enabled." Keeping the allowlist (vs dropping it) preserves grep/find/ls,
+    // which are otherwise inactive by default.
+    const extensionNames = (opts.resourceLoader?.getExtensions().extensions ?? []).flatMap((e) => [...e.tools.keys()]);
     const { session } = await createAgentSession({
       cwd: opts.workspaceDir,
-      tools: [...AGENT_TOOLS, ...customNames], // `tools` is an allowlist over ALL tools, incl. custom
+      // Allowlist over ALL tools: built-in coding tools, our custom tg_* tools, and installed-extension tools.
+      tools: [...new Set([...AGENT_TOOLS, ...customNames, ...extensionNames])],
       customTools: opts.customTools,
       sessionManager,
       resourceLoader: opts.resourceLoader,
