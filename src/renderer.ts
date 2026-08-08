@@ -22,6 +22,7 @@
 import { errFields, log as rootLog } from "./log.ts";
 import { renderMarkdownChunks } from "./markdown.ts";
 import type { Route } from "./route.ts";
+import { stripUnsafe } from "./sanitize.ts";
 import type { Writer } from "./writer.ts";
 
 const FLUSH_MS = 250; // draft coalescing interval (tune up if 429s appear — plan §15/M1)
@@ -172,7 +173,9 @@ export class Renderer {
       return;
     }
 
-    let out = answer;
+    // Strip bidi-override / zero-width chars so a prompt-injected answer can't
+    // visually lie in Telegram (§11) — same treatment tg_ask text already gets.
+    let out = stripUnsafe(answer);
     const total = [...counts.values()].reduce((a, b) => a + b, 0);
     if (total > 0) out += `\n\n${formatToolSummary(counts, elapsedMs)}`;
 
@@ -264,7 +267,7 @@ export class Renderer {
     if (this.acc) segments.push(this.acc);
     let body = segments.join("\n\n");
     if (body.length > budget) body = "…" + body.slice(body.length - (budget - 1));
-    return body + status;
+    return stripUnsafe(body + status);
   }
 
   /**
