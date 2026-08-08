@@ -404,6 +404,40 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     },
   });
 
+  const notificationCreate = defineTool({
+    name: "notification_create",
+    label: "Create One-off Notification",
+    description:
+      "Create a one-off delayed notification/reminder in this Telegram chat/thread. " +
+      "Use when the user asks for a reminder once, either after a delay or at a specific time. " +
+      "For specific times, provide runAt as an absolute RFC3339/ISO timestamp using the user's timezone context.",
+    promptSnippet: "notification_create({title, prompt, runAt? | delaySeconds?}) — create a one-off notification",
+    parameters: Type.Object({
+      title: Type.String({ description: "Short title for the notification." }),
+      prompt: Type.String({ description: "Prompt/message to deliver when the notification fires." }),
+      runAt: Type.Optional(Type.String({ description: "Absolute RFC3339/ISO timestamp, e.g. 2026-08-08T15:30:00+02:00." })),
+      delaySeconds: Type.Optional(Type.Number({ description: "Delay from now in seconds." })),
+    }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      const task = ctx.scheduler.createNotification(ctx.route, params);
+      return { content: [{ type: "text" as const, text: formatTask(task) }], details: {} };
+    },
+  });
+
+  const notificationCancel = defineTool({
+    name: "notification_cancel",
+    label: "Cancel One-off Notification",
+    description: "Cancel/delete a pending one-off notification by id.",
+    promptSnippet: "notification_cancel({id}) — cancel a one-off notification",
+    parameters: Type.Object({ id: Type.String() }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      ctx.scheduler.delete(params.id);
+      return { content: [{ type: "text" as const, text: `Cancelled notification ${params.id}.` }], details: {} };
+    },
+  });
+
   const tools: ToolDefinition[] = [
     sendPhoto,
     sendDocument,
@@ -423,6 +457,8 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     schedulePause,
     scheduleResume,
     scheduleDelete,
+    notificationCreate,
+    notificationCancel,
   ];
 
   if (ctx.voice) {
@@ -461,6 +497,7 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
 
 function formatTask(task: {
   id: string;
+  kind: "recurring" | "one_off";
   title: string;
   cron: string;
   timezone: string;
@@ -476,11 +513,14 @@ function formatTask(task: {
   return [
     `id: ${task.id}`,
     `title: ${task.title}`,
+    `kind: ${task.kind}`,
     `status: ${task.enabled ? "enabled" : "paused"}`,
-    `cron: ${task.cron} (${task.timezone})`,
+    task.kind === "recurring" ? `cron: ${task.cron} (${task.timezone})` : undefined,
     `next_run_at: ${next}`,
     `last_run_at: ${last}`,
     `thread: ${task.taskChatId}/${task.taskThreadId}`,
     `prompt: ${task.prompt}`,
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }

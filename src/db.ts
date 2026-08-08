@@ -44,9 +44,10 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE routes ADD COLUMN titled INTEGER NOT NULL DEFAULT 0;`,
   // v5 — the topic's current icon emoji (for context display; set via editForumTopic).
   `ALTER TABLE routes ADD COLUMN icon TEXT;`,
-  // v6 — LLM-managed scheduled tasks. Each task owns one stable output topic.
+  // v6 — LLM-managed recurring tasks and one-off notifications.
   `CREATE TABLE scheduled_tasks (
      id               TEXT PRIMARY KEY,
+     kind             TEXT NOT NULL DEFAULT 'recurring',
      source_chat_id   INTEGER NOT NULL,
      source_thread_id INTEGER NOT NULL,
      task_chat_id     INTEGER NOT NULL,
@@ -87,6 +88,7 @@ interface RouteDbRow {
 
 export interface ScheduledTaskRow {
   id: string;
+  kind: "recurring" | "one_off";
   sourceChatId: number;
   sourceThreadId: number;
   taskChatId: number;
@@ -104,6 +106,7 @@ export interface ScheduledTaskRow {
 
 interface ScheduledTaskDbRow {
   id: string;
+  kind: string;
   source_chat_id: number;
   source_thread_id: number;
   task_chat_id: number;
@@ -135,6 +138,7 @@ function toRouteRow(r: RouteDbRow): RouteRow {
 function toScheduledTaskRow(r: ScheduledTaskDbRow): ScheduledTaskRow {
   return {
     id: r.id,
+    kind: r.kind === "one_off" ? "one_off" : "recurring",
     sourceChatId: r.source_chat_id,
     sourceThreadId: r.source_thread_id,
     taskChatId: r.task_chat_id,
@@ -257,12 +261,13 @@ export class Db {
     this.db
       .query(
         `INSERT INTO scheduled_tasks (
-           id, source_chat_id, source_thread_id, task_chat_id, task_thread_id,
+           id, kind, source_chat_id, source_thread_id, task_chat_id, task_thread_id,
            title, cron, timezone, prompt, enabled, next_run_at, last_run_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
+        task.kind,
         task.sourceChatId,
         task.sourceThreadId,
         task.taskChatId,
