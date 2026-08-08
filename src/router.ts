@@ -20,6 +20,7 @@ import { errFields, log } from "./log.ts";
 import type { QuestionRegistry } from "./questions.ts";
 import type { Route, TurnRef } from "./route.ts";
 import { routeKey } from "./route.ts";
+import type { Scheduler } from "./scheduler.ts";
 import { Session } from "./session.ts";
 import { buildRouteTools } from "./tools.ts";
 import type { Voice } from "./voice.ts";
@@ -33,6 +34,7 @@ export class Router {
   private readonly sessions = new Map<string, Session>();
   private readonly creating = new Map<string, Promise<Session>>();
   private iconSet?: { emojis: string[]; byEmoji: Map<string, string> };
+  private scheduler?: Scheduler;
 
   constructor(
     private readonly api: Api,
@@ -41,6 +43,10 @@ export class Router {
     private readonly questions: QuestionRegistry,
     private readonly voice: Voice,
   ) {}
+
+  setScheduler(scheduler: Scheduler) {
+    this.scheduler = scheduler;
+  }
 
   /** Log known routes at boot (sessions themselves stay lazy). */
   restore() {
@@ -116,6 +122,8 @@ export class Router {
         voice: this.voice,
         turn,
         iconEmojis,
+        route,
+        scheduler: this.scheduler,
         setTopic: (o) => this.renameTopic(route, { name: o.name, iconEmoji: o.icon }),
       }),
       onFinalized: (text) => {

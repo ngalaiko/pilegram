@@ -15,7 +15,8 @@ import { Type } from "@sinclair/typebox";
 import type { Db } from "./db.ts";
 import { guessMime, sha256 } from "./media.ts";
 import { type QuestionRegistry, renderQuestionKeyboard } from "./questions.ts";
-import type { TurnRef } from "./route.ts";
+import type { Route, TurnRef } from "./route.ts";
+import type { Scheduler } from "./scheduler.ts";
 import { stripUnsafe } from "./sanitize.ts";
 import type { Voice } from "./voice.ts";
 import type { Writer } from "./writer.ts";
@@ -33,6 +34,10 @@ export interface RouteToolContext {
   setTopic: (opts: { name?: string; icon?: string }) => Promise<void>;
   /** The emojis allowed as topic icons (for tg_set_topic's description). */
   iconEmojis: string[];
+  /** Current route; schedule_create uses its chat as the home for the task topic. */
+  route: Route;
+  /** LLM-managed scheduled task service, if enabled. */
+  scheduler?: Scheduler;
 }
 
 /** Send a question with tappable options; resolves to the chosen option text(s). */
@@ -299,13 +304,103 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     promptSnippet: "tg_set_topic({name?, icon?}) — set the topic's title and/or icon",
     parameters: Type.Object({
       name: Type.Optional(Type.String({ description: "New topic title (2-5 words)." })),
-      icon: Type.Optional(Type.String({ description: "One of the allowed topic icon emojis." })),
+      icon: Type.Optional(Type.String({ description: "One of the allowed topic icons." })),
     }),
     async execute(_id, params) {
       if (!params.name && !params.icon) throw new Error("provide name and/or icon");
       await ctx.setTopic({ name: params.name, icon: params.icon });
       const changed = [params.name ? `name → "${params.name}"` : "", params.icon ? `icon → ${params.icon}` : ""].filter(Boolean).join(", ");
       return { content: [{ type: "text" as const, text: `Updated topic ${changed}.` }], details: {} };
+    },
+  });
+
+  const scheduleCreate = defineTool({
+    name: "schedule_create",
+    label: "Create Scheduled Task",
+    description:
+      "Create a recurring scheduled task. Use when the user asks you to run something later or repeatedly. " +
+      "Do not expose cron syntax unless asked; infer an appropriate cron expression and timezone. " +
+      "Each task gets one dedicated Telegram topic/thread, reused for every execution.",
+    promptSnippet: "schedule_create({title, cron, prompt, timezone?}) — create a recurring task with its own thread",
+    parameters: Type.Object({
+      title: Type.String({ description: "Short human title for the task/thread." }),
+      cron: Type.String({ description: "5-field cron expression: minute hour day-of-month month day-of-week." }),
+      prompt: Type.String({ description: "Prompt to run at each scheduled time." }),
+      timezone: Type.Optional(Type.String({ description: "IANA time zone. Defaults to the gateway timezone." })),
+    }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      const task = await ctx.scheduler.create(ctx.route, params);
+      return { content: [{ type: "text" as const, text: formatTask(task) }], details: {} };
+    },
+  });
+
+  const scheduleList = defineTool({
+    name: "schedule_list",
+    label: "List Scheduled Tasks",
+    description: "List all scheduled tasks managed by pilegram.",
+    promptSnippet: "schedule_list() — list scheduled tasks",
+    parameters: Type.Object({}),
+    async execute() {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      const tasks = ctx.scheduler.list();
+      return { content: [{ type: "text" as const, text: tasks.length ? tasks.map(formatTask).join("\n\n") : "No scheduled tasks." }], details: {} };
+    },
+  });
+
+  const scheduleUpdate = defineTool({
+    name: "schedule_update",
+    label: "Update Scheduled Task",
+    description: "Update a scheduled task's title, cron, timezone, prompt, or enabled state.",
+    promptSnippet: "schedule_update({id, title?, cron?, prompt?, timezone?, enabled?}) — update a task",
+    parameters: Type.Object({
+      id: Type.String(),
+      title: Type.Optional(Type.String()),
+      cron: Type.Optional(Type.String()),
+      prompt: Type.Optional(Type.String()),
+      timezone: Type.Optional(Type.String()),
+      enabled: Type.Optional(Type.Boolean()),
+    }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      return { content: [{ type: "text" as const, text: formatTask(ctx.scheduler.update(params)) }], details: {} };
+    },
+  });
+
+  const schedulePause = defineTool({
+    name: "schedule_pause",
+    label: "Pause Scheduled Task",
+    description: "Pause a scheduled task without deleting it.",
+    promptSnippet: "schedule_pause({id}) — pause a task",
+    parameters: Type.Object({ id: Type.String() }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      return { content: [{ type: "text" as const, text: formatTask(ctx.scheduler.pause(params.id)) }], details: {} };
+    },
+  });
+
+  const scheduleResume = defineTool({
+    name: "schedule_resume",
+    label: "Resume Scheduled Task",
+    description: "Resume a paused scheduled task and recompute its next run.",
+    promptSnippet: "schedule_resume({id}) — resume a task",
+    parameters: Type.Object({ id: Type.String() }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      return { content: [{ type: "text" as const, text: formatTask(ctx.scheduler.resume(params.id)) }], details: {} };
+    },
+  });
+
+  const scheduleDelete = defineTool({
+    name: "schedule_delete",
+    label: "Delete Scheduled Task",
+    description: "Delete a scheduled task. Its existing Telegram topic is left in place for history.",
+    promptSnippet: "schedule_delete({id}) — delete a task",
+    parameters: Type.Object({ id: Type.String() }),
+    async execute(_id, params) {
+      if (!ctx.scheduler) throw new Error("scheduler is not available");
+      ctx.scheduler.delete(params.id);
+      return { content: [{ type: "text" as const, text: `Deleted scheduled task ${params.id}.` }], details: {} };
     },
   });
 
@@ -322,6 +417,12 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     editMessage,
     deleteMessage,
     setTopic,
+    scheduleCreate,
+    scheduleList,
+    scheduleUpdate,
+    schedulePause,
+    scheduleResume,
+    scheduleDelete,
   ];
 
   if (ctx.voice) {
@@ -356,4 +457,30 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
   }
 
   return tools;
+}
+
+function formatTask(task: {
+  id: string;
+  title: string;
+  cron: string;
+  timezone: string;
+  prompt: string;
+  enabled: boolean;
+  nextRunAt: number;
+  lastRunAt: number | null;
+  taskChatId: number;
+  taskThreadId: number;
+}): string {
+  const next = new Date(task.nextRunAt).toISOString();
+  const last = task.lastRunAt ? new Date(task.lastRunAt).toISOString() : "never";
+  return [
+    `id: ${task.id}`,
+    `title: ${task.title}`,
+    `status: ${task.enabled ? "enabled" : "paused"}`,
+    `cron: ${task.cron} (${task.timezone})`,
+    `next_run_at: ${next}`,
+    `last_run_at: ${last}`,
+    `thread: ${task.taskChatId}/${task.taskThreadId}`,
+    `prompt: ${task.prompt}`,
+  ].join("\n");
 }

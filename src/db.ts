@@ -44,6 +44,23 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE routes ADD COLUMN titled INTEGER NOT NULL DEFAULT 0;`,
   // v5 — the topic's current icon emoji (for context display; set via editForumTopic).
   `ALTER TABLE routes ADD COLUMN icon TEXT;`,
+  // v6 — LLM-managed scheduled tasks. Each task owns one stable output topic.
+  `CREATE TABLE scheduled_tasks (
+     id               TEXT PRIMARY KEY,
+     source_chat_id   INTEGER NOT NULL,
+     source_thread_id INTEGER NOT NULL,
+     task_chat_id     INTEGER NOT NULL,
+     task_thread_id   INTEGER NOT NULL,
+     title            TEXT NOT NULL,
+     cron             TEXT NOT NULL,
+     timezone         TEXT NOT NULL,
+     prompt           TEXT NOT NULL,
+     enabled          INTEGER NOT NULL DEFAULT 1,
+     next_run_at      INTEGER NOT NULL,
+     last_run_at      INTEGER,
+     created_at       INTEGER NOT NULL,
+     updated_at       INTEGER NOT NULL
+   );`,
 ];
 
 export interface RouteRow {
@@ -68,6 +85,40 @@ interface RouteDbRow {
   icon: string | null;
 }
 
+export interface ScheduledTaskRow {
+  id: string;
+  sourceChatId: number;
+  sourceThreadId: number;
+  taskChatId: number;
+  taskThreadId: number;
+  title: string;
+  cron: string;
+  timezone: string;
+  prompt: string;
+  enabled: boolean;
+  nextRunAt: number;
+  lastRunAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface ScheduledTaskDbRow {
+  id: string;
+  source_chat_id: number;
+  source_thread_id: number;
+  task_chat_id: number;
+  task_thread_id: number;
+  title: string;
+  cron: string;
+  timezone: string;
+  prompt: string;
+  enabled: number;
+  next_run_at: number;
+  last_run_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 function toRouteRow(r: RouteDbRow): RouteRow {
   return {
     chatId: r.chat_id,
@@ -78,6 +129,25 @@ function toRouteRow(r: RouteDbRow): RouteRow {
     lastRenderedSig: r.last_rendered_sig,
     titled: r.titled === 1,
     icon: r.icon,
+  };
+}
+
+function toScheduledTaskRow(r: ScheduledTaskDbRow): ScheduledTaskRow {
+  return {
+    id: r.id,
+    sourceChatId: r.source_chat_id,
+    sourceThreadId: r.source_thread_id,
+    taskChatId: r.task_chat_id,
+    taskThreadId: r.task_thread_id,
+    title: r.title,
+    cron: r.cron,
+    timezone: r.timezone,
+    prompt: r.prompt,
+    enabled: r.enabled === 1,
+    nextRunAt: r.next_run_at,
+    lastRunAt: r.last_run_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   };
 }
 
@@ -179,6 +249,74 @@ export class Db {
 
   markRouteTitled(chatId: number, threadId: number) {
     this.db.query("UPDATE routes SET titled = 1, updated_at = ? WHERE chat_id = ? AND thread_id = ?").run(Date.now(), chatId, threadId);
+  }
+
+  // ---- scheduled tasks ----
+
+  createScheduledTask(task: ScheduledTaskRow) {
+    this.db
+      .query(
+        `INSERT INTO scheduled_tasks (
+           id, source_chat_id, source_thread_id, task_chat_id, task_thread_id,
+           title, cron, timezone, prompt, enabled, next_run_at, last_run_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        task.id,
+        task.sourceChatId,
+        task.sourceThreadId,
+        task.taskChatId,
+        task.taskThreadId,
+        task.title,
+        task.cron,
+        task.timezone,
+        task.prompt,
+        task.enabled ? 1 : 0,
+        task.nextRunAt,
+        task.lastRunAt,
+        task.createdAt,
+        task.updatedAt,
+      );
+  }
+
+  getScheduledTask(id: string): ScheduledTaskRow | undefined {
+    const row = this.db.query("SELECT * FROM scheduled_tasks WHERE id = ?").get(id) as ScheduledTaskDbRow | null;
+    return row ? toScheduledTaskRow(row) : undefined;
+  }
+
+  listScheduledTasks(): ScheduledTaskRow[] {
+    const rows = this.db.query("SELECT * FROM scheduled_tasks ORDER BY enabled DESC, title COLLATE NOCASE").all() as ScheduledTaskDbRow[];
+    return rows.map(toScheduledTaskRow);
+  }
+
+  listDueScheduledTasks(now: number): ScheduledTaskRow[] {
+    const rows = this.db
+      .query("SELECT * FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at ASC")
+      .all(now) as ScheduledTaskDbRow[];
+    return rows.map(toScheduledTaskRow);
+  }
+
+  updateScheduledTask(id: string, patch: Partial<Pick<ScheduledTaskRow, "title" | "cron" | "timezone" | "prompt" | "enabled" | "nextRunAt" | "lastRunAt">>) {
+    const current = this.getScheduledTask(id);
+    if (!current) throw new Error(`scheduled task not found: ${id}`);
+    const next = { ...current, ...patch, updatedAt: Date.now() };
+    this.db
+      .query(
+        `UPDATE scheduled_tasks SET
+           title = ?, cron = ?, timezone = ?, prompt = ?, enabled = ?, next_run_at = ?, last_run_at = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(next.title, next.cron, next.timezone, next.prompt, next.enabled ? 1 : 0, next.nextRunAt, next.lastRunAt, next.updatedAt, id);
+  }
+
+  setScheduledTaskRoute(id: string, chatId: number, threadId: number) {
+    this.db
+      .query("UPDATE scheduled_tasks SET task_chat_id = ?, task_thread_id = ?, updated_at = ? WHERE id = ?")
+      .run(chatId, threadId, Date.now(), id);
+  }
+
+  deleteScheduledTask(id: string) {
+    this.db.query("DELETE FROM scheduled_tasks WHERE id = ?").run(id);
   }
 
   // ---- media file_id cache (M4) ----
