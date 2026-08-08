@@ -166,7 +166,10 @@ export class Session {
         const finalText = this.agent.getLastAssistantText();
         this.renderer.onSettled(finalText);
         this.busy = false;
-        this.onFinalized?.(finalText);
+        // A voice-only turn's text is spoken, never rendered to Telegram — don't
+        // record it as the last-rendered answer, or reconcile would suppress the
+        // legitimate text repost if we crash before the voice note is sent.
+        this.onFinalized?.(this.voiceMode ? undefined : finalText);
         // Voice mode: speak the answer as a voice note.
         if (this.voiceMode && this.voice && finalText && finalText.trim() !== "") void this.speak(finalText);
         break;
