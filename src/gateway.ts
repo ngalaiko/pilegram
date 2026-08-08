@@ -68,6 +68,14 @@ export class Gateway {
 
     this.running = true;
     this.loopDone = this.pollLoop();
+    // Reaching this catch means the poll loop threw (e.g. 409 Conflict — another
+    // poller owns this bot); a normal shutdown resolves loopDone instead. Exit so
+    // the supervisor restarts us, rather than lingering as a live process that no
+    // longer polls (the scheduler's interval would otherwise keep us alive, deaf).
+    this.loopDone.catch((e) => {
+      log.error("poll loop crashed — exiting", errFields(e));
+      process.exit(1);
+    });
   }
 
   private async registerCommands() {
