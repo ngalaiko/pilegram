@@ -1,5 +1,9 @@
 # pilegram
 
+<p align="center">
+  <img src="assets/logo.png" alt="pilegram" width="200">
+</p>
+
 A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegram.
 
 ## Features
