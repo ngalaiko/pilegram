@@ -87,7 +87,8 @@ export class Router {
     const turn: TurnRef = {}; // shared current-message pointer for tg_react
     const messageLog = new MessageLog(); // rolling message-id table for context injection (§15)
     const isTopic = threadId !== 0;
-    const iconEmojis = isTopic ? (await this.icons()).emojis : []; // allowed topic-icon emojis, for tg_set_topic
+    // Fetch once per router. Topic creation is available from General too.
+    const iconEmojis = (await this.icons()).emojis;
 
     // Resource loader carrying the per-turn context-injection extension.
     const resourceLoader = new DefaultResourceLoader({
@@ -124,6 +125,8 @@ export class Router {
         iconEmojis,
         route,
         scheduler: this.scheduler,
+        createTopic: (o) => this.createTopic(route.chatId, o),
+        deleteTopic: (topicThreadId) => this.deleteTopic(route.chatId, topicThreadId),
         setTopic: (o) => this.renameTopic(route, { name: o.name, iconEmoji: o.icon }),
       }),
       onFinalized: (text) => {
@@ -169,17 +172,31 @@ export class Router {
     return this.iconSet;
   }
 
+  /** Create a forum topic and persist its route without eagerly starting pi. */
+  async createTopic(chatId: number, opts: { name: string; icon?: string }): Promise<Route> {
+    const name = cleanTopicName(opts.name);
+    const icon_custom_emoji_id = opts.icon ? (await this.iconId(opts.icon)) : undefined;
+    const topic = await this.api.createForumTopic(chatId, name, icon_custom_emoji_id ? { icon_custom_emoji_id } : undefined);
+    const route: Route = { chatId, threadId: topic.message_thread_id };
+    this.register(route, name);
+    if (opts.icon) this.db.setRouteIcon(chatId, route.threadId!, opts.icon);
+    return route;
+  }
+
+  /** Permanently delete a topic and dispose its associated agent session. */
+  async deleteTopic(chatId: number, threadId: number): Promise<void> {
+    if (!Number.isSafeInteger(threadId) || threadId <= 0) throw new Error("provide a valid non-General topic thread id");
+    await this.api.deleteForumTopic(chatId, threadId);
+    this.endRoute({ chatId, threadId });
+  }
+
   /** Rename and/or re-icon a topic (shared by auto-title and the tg_set_topic tool). */
   async renameTopic(route: Route, opts: { name?: string; iconEmoji?: string }): Promise<void> {
     const threadId = route.threadId;
     if (threadId === undefined || threadId === 0) throw new Error("the General thread has no topic to rename");
     const edit: { name?: string; icon_custom_emoji_id?: string } = {};
     if (opts.name) edit.name = opts.name;
-    if (opts.iconEmoji) {
-      const id = (await this.icons()).byEmoji.get(opts.iconEmoji);
-      if (!id) throw new Error(`no topic icon available for ${opts.iconEmoji}`);
-      edit.icon_custom_emoji_id = id;
-    }
+    if (opts.iconEmoji) edit.icon_custom_emoji_id = await this.iconId(opts.iconEmoji);
     if (edit.name === undefined && edit.icon_custom_emoji_id === undefined) return;
     await this.api.editForumTopic(route.chatId, threadId, edit);
     if (opts.name) {
@@ -187,6 +204,12 @@ export class Router {
       this.sessions.get(routeKey(route))?.setName(opts.name);
     }
     if (opts.iconEmoji) this.db.setRouteIcon(route.chatId, threadId, opts.iconEmoji);
+  }
+
+  private async iconId(iconEmoji: string): Promise<string> {
+    const id = (await this.icons()).byEmoji.get(iconEmoji);
+    if (!id) throw new Error(`no topic icon available for ${iconEmoji}`);
+    return id;
   }
 
   /** Persist a route without spawning its session (lazy — e.g. UI-created topic). */
@@ -218,4 +241,10 @@ export class Router {
     for (const session of this.sessions.values()) session.dispose();
     this.sessions.clear();
   }
+}
+
+function cleanTopicName(raw: string): string {
+  const name = raw.replace(/\s+/g, " ").trim();
+  if (name.length < 1 || name.length > 128) throw new Error("topic name must be 1-128 characters");
+  return name;
 }
