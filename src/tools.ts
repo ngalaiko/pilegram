@@ -30,9 +30,13 @@ export interface RouteToolContext {
   questions: QuestionRegistry;
   turn: TurnRef;
   voice?: Voice;
+  /** Create a new forum topic in this chat. */
+  createTopic: (opts: { name: string; icon?: string }) => Promise<Route>;
+  /** Delete a forum topic in this chat (throws for the General thread). */
+  deleteTopic: (threadId: number) => Promise<void>;
   /** Update this topic's title/icon (no-op-safe; throws in the General thread). */
   setTopic: (opts: { name?: string; icon?: string }) => Promise<void>;
-  /** The emojis allowed as topic icons (for tg_set_topic's description). */
+  /** The emojis allowed as topic icons (for topic-tool descriptions). */
   iconEmojis: string[];
   /** Current route; schedule_create uses its chat as the home for the task topic. */
   route: Route;
@@ -295,6 +299,41 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     },
   });
 
+  const createTopic = defineTool({
+    name: "tg_create_topic",
+    label: "Create Topic",
+    description:
+      "Create a new Telegram forum topic/thread in this chat. Use when the user asks to start a separate conversation or organize work into a new thread. " +
+      `Provide a short title and optionally exactly ONE of these allowed icon emojis: ${ctx.iconEmojis.join(" ") || "(none available)"}.`,
+    promptSnippet: "tg_create_topic({name, icon?}) — create a Telegram topic/thread in this chat",
+    parameters: Type.Object({
+      name: Type.String({ description: "New topic title (1-128 characters)." }),
+      icon: Type.Optional(Type.String({ description: "One allowed topic-icon emoji." })),
+    }),
+    async execute(_id, params) {
+      const route = await ctx.createTopic(params);
+      return {
+        content: [{ type: "text" as const, text: `Created topic \"${params.name}\" (thread_id ${route.threadId}).` }],
+        details: {},
+      };
+    },
+  });
+
+  const deleteTopic = defineTool({
+    name: "tg_delete_topic",
+    label: "Delete Topic",
+    description:
+      "Permanently delete a Telegram forum topic/thread in this chat, including its messages. This cannot be undone; call it only after the user explicitly confirms deletion. Never use it for the General thread.",
+    promptSnippet: "tg_delete_topic({threadId}) — permanently delete a confirmed Telegram topic",
+    parameters: Type.Object({
+      threadId: Type.Number({ description: "The topic's message_thread_id to delete." }),
+    }),
+    async execute(_id, params) {
+      await ctx.deleteTopic(params.threadId);
+      return { content: [{ type: "text" as const, text: `Deleted topic thread_id ${params.threadId}.` }], details: {} };
+    },
+  });
+
   const setTopic = defineTool({
     name: "tg_set_topic",
     label: "Set Topic",
@@ -450,6 +489,8 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     unpin,
     editMessage,
     deleteMessage,
+    createTopic,
+    deleteTopic,
     setTopic,
     scheduleCreate,
     scheduleList,

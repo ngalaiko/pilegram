@@ -10,8 +10,8 @@ A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegra
 
 - **Streaming replies** via Telegram message drafts (animated, then finalized).
 - **Topics = sessions**: each Telegram topic is its own agent session with its own
-  context; create/delete them with Telegram's native thread UI. The
-  agent keeps each topic's **title and icon** relevant on its own.
+  workspace and context. The agent can create threads and, after explicit confirmation,
+  delete them; it also keeps each topic's **title and icon** relevant on its own.
 - **Markdown → Telegram HTML**: headings, code, lists, tables, links render properly.
 - **Images** in (vision) & out, **documents** in (path + inlined text) & out, **albums** both ways.
 - **Voice**, fully local: voice notes are transcribed with **whisper.cpp**; replies
