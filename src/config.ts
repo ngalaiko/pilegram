@@ -3,7 +3,7 @@
  * (never argv, which is visible in `ps`). Everything else is a CLI flag.
  *
  * Two separate locations:
- *   - state dir  (--state-dir):  SQLite db + per-topic conversation workspaces.
+ *   - state dir  (--state-dir):  SQLite db (routes, media cache, scheduled tasks).
  *                                Small, worth backing up. Defaults under XDG config.
  *   - models dir (--models-dir): downloaded speech-model weights (~2GB). Large,
  *                                re-downloadable cache. Defaults under XDG cache.
@@ -19,7 +19,7 @@ export interface Config {
   botToken: string;
   /** Hard allowlist of Telegram user ids (§1). Empty is a config error. */
   allowedUserIds: Set<number>;
-  /** State: SQLite db + conversation workspaces. */
+  /** State: the SQLite db. */
   stateDir: string;
   dbPath: string;
   /** Model-weights cache (whisper + Supertonic). Separate from state. */
@@ -38,7 +38,7 @@ Secret (environment only):
 
 Options:
   --allow <ids>                comma-separated allowed Telegram user ids   [required]
-  --state-dir <path>           db + conversation workspaces   (default: $XDG_CONFIG_HOME/pilegram)
+  --state-dir <path>           SQLite db location             (default: $XDG_CONFIG_HOME/pilegram)
   --models-dir <path>          speech-model cache             (default: $XDG_CACHE_HOME/pilegram)
   --db-path <path>             override the SQLite path       (default: <state-dir>/pilegram.db)
   --whisper-model <name>       whisper.cpp ggml model         (default: large-v3-turbo)
@@ -61,6 +61,13 @@ function parseUserIds(raw: string): Set<number> {
     });
   if (ids.length === 0) throw new Error("--allow is required (comma-separated Telegram user ids)");
   return new Set(ids);
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number, flag: string): number {
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`invalid ${flag}: ${JSON.stringify(raw)} (expected a positive integer)`);
+  return n;
 }
 
 /** XDG base (or its ~ fallback) + the pilegram subdir. */
@@ -114,6 +121,14 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     process.exit(2);
   }
 
+  let pollTimeoutSec: number;
+  try {
+    pollTimeoutSec = parsePositiveInt(str("poll-timeout"), 30, "--poll-timeout");
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n\n${USAGE}`);
+    process.exit(2);
+  }
+
   const stateDir = resolve(str("state-dir") ?? xdgDir("XDG_CONFIG_HOME", ".config"));
   const modelsDir = resolve(str("models-dir") ?? xdgDir("XDG_CACHE_HOME", ".cache"));
   const level = str("log-level") ?? "info";
@@ -124,7 +139,7 @@ export function loadConfig(argv: string[] = process.argv.slice(2)): Config {
     stateDir,
     dbPath: resolve(str("db-path") ?? join(stateDir, "pilegram.db")),
     modelsDir,
-    pollTimeoutSec: Number(str("poll-timeout") ?? "30"),
+    pollTimeoutSec,
     whisperModel: str("whisper-model") ?? "large-v3-turbo",
     supertonicVoice: str("voice") ?? "M1",
     timeZone: str("tz") ?? "Europe/Stockholm",

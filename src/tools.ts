@@ -113,7 +113,7 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
       "Send an image to the user in this Telegram chat. Use for charts, screenshots, or images you produced. Max 10MB (send larger images with tg_send_document).",
     promptSnippet: "tg_send_photo({path, caption?, spoiler?}) — send an image to the user",
     parameters: Type.Object({
-      path: Type.String({ description: "Path to the image (absolute, or relative to the workspace)." }),
+      path: Type.String({ description: "Path to the image (absolute, or relative to the working directory)." }),
       caption: Type.Optional(Type.String({ description: "Optional caption." })),
       spoiler: Type.Optional(Type.Boolean({ description: "Hide behind a spoiler until tapped." })),
     }),
@@ -138,7 +138,7 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     description: "Send a file to the user in this Telegram chat (any type). Use for logs, generated files, or large images.",
     promptSnippet: "tg_send_document({path, caption?}) — send a file to the user",
     parameters: Type.Object({
-      path: Type.String({ description: "Path to the file (absolute, or relative to the workspace)." }),
+      path: Type.String({ description: "Path to the file (absolute, or relative to the working directory)." }),
       caption: Type.Optional(Type.String({ description: "Optional caption." })),
     }),
     async execute(_id, params) {
@@ -513,7 +513,7 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
         promptSnippet: "tg_send_voice({text?|path?}) — send a spoken voice note",
         parameters: Type.Object({
           text: Type.Optional(Type.String({ description: "Text to speak." })),
-          path: Type.Optional(Type.String({ description: "Path to an existing audio file (absolute or workspace-relative)." })),
+          path: Type.Optional(Type.String({ description: "Path to an existing audio file (absolute or relative to the working directory)." })),
         }),
         async execute(_id, params) {
           if (params.path) {

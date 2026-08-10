@@ -22,6 +22,7 @@
 import { errFields, log as rootLog } from "./log.ts";
 import { renderMarkdownChunks } from "./markdown.ts";
 import type { Route } from "./route.ts";
+import { stripUnsafe } from "./sanitize.ts";
 import type { Writer } from "./writer.ts";
 
 const FLUSH_MS = 250; // draft coalescing interval (tune up if 429s appear — plan §15/M1)
@@ -135,7 +136,7 @@ export class Renderer {
     this.scheduleFlush();
   }
 
-  /** Reflect the steering/follow-up queue depth in the draft (§12). */
+  /** Reflect the steering queue depth in the draft (§12). */
   setQueueDepth(n: number) {
     this.queueDepth = n;
     if (this.running) this.scheduleFlush();
@@ -172,7 +173,9 @@ export class Renderer {
       return;
     }
 
-    let out = answer;
+    // Strip bidi-override / zero-width chars so a prompt-injected answer can't
+    // visually lie in Telegram (§11) — same treatment tg_ask text already gets.
+    let out = stripUnsafe(answer);
     const total = [...counts.values()].reduce((a, b) => a + b, 0);
     if (total > 0) out += `\n\n${formatToolSummary(counts, elapsedMs)}`;
 
@@ -189,12 +192,31 @@ export class Renderer {
       extra = undefined;
     }
     this.log.info("finalize", { chars: out.length, chunks: chunks.length, tools: total, html: !!extra });
-    for (const chunk of chunks) {
-      this.writer
-        .persist(chunk, extra)
-        .then((m) => this.onSent?.(m.message_id, chunk))
-        .catch((e) => this.log.error("finalize persist failed", errFields(e)));
-    }
+    for (const chunk of chunks) this.sendFinal(chunk, extra);
+  }
+
+  /**
+   * Persist one finalized chunk. If it was sent as HTML and Telegram rejects the
+   * entities (e.g. a `<pre>` block split across a chunk boundary, or a construct
+   * Telegram doesn't accept), re-send the chunk as readable plain text rather
+   * than dropping it — a rejected chunk would otherwise vanish from the answer.
+   */
+  private sendFinal(chunk: string, extra: { parse_mode: "HTML" } | undefined) {
+    this.writer
+      .persist(chunk, extra)
+      .then((m) => this.onSent?.(m.message_id, chunk))
+      .catch((e) => {
+        if (!extra) {
+          this.log.error("finalize persist failed", errFields(e));
+          return;
+        }
+        this.log.warn("HTML finalize rejected; retrying as plain text", errFields(e));
+        const plain = htmlToPlain(chunk);
+        this.writer
+          .persist(plain)
+          .then((m) => this.onSent?.(m.message_id, plain))
+          .catch((e2) => this.log.error("plain finalize fallback failed", errFields(e2)));
+      });
   }
 
   onError(err: unknown) {
@@ -245,7 +267,17 @@ export class Renderer {
     if (this.acc) segments.push(this.acc);
     let body = segments.join("\n\n");
     if (body.length > budget) body = "…" + body.slice(body.length - (budget - 1));
-    return body + status;
+    return stripUnsafe(body + status);
+  }
+
+  /**
+   * Stop all timers and mark idle. Called when the owning Session is disposed
+   * (e.g. its topic is closed) so a turn that was still running can't keep
+   * firing the heartbeat / chat-action intervals against a dead route forever.
+   */
+  stop() {
+    this.clearTimers();
+    this.running = false;
   }
 
   private clearTimers() {
@@ -262,6 +294,16 @@ export class Renderer {
       this.actionTimer = undefined;
     }
   }
+}
+
+/** Strip Telegram-HTML tags and unescape entities, for the plain-text fallback. */
+function htmlToPlain(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
 }
 
 /** One-line, newline-free summary of a tool call's key argument. */

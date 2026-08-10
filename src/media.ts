@@ -1,5 +1,5 @@
 /**
- * Media helpers: download inbound Telegram files into the route workspace,
+ * Media helpers: download inbound Telegram files into the working directory,
  * turn image bytes into pi ImageContent, and hash/mime utilities for the
  * outbound file_id cache.
  *

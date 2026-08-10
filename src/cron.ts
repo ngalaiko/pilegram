@@ -11,11 +11,23 @@ export function nextCronRun(cron: string, timeZone: string, from = new Date()): 
     dayOfWeek: parseField(parts[4]!, 0, 7).map((n) => (n === 7 ? 0 : n)),
   };
 
+  // One formatter, reused across the whole scan — constructing a DateTimeFormat
+  // per minute (up to ~525k times) is the dominant cost and blocks the loop.
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    minute: "numeric",
+    hour: "numeric",
+    day: "numeric",
+    month: "numeric",
+    weekday: "short",
+    hourCycle: "h23",
+  });
+
   let t = Math.floor(from.getTime() / MINUTE) * MINUTE + MINUTE;
   // Search up to 366 days minute-by-minute. Simple, deterministic, good enough for a tiny task list.
   const end = t + 366 * 24 * 60 * MINUTE;
   for (; t <= end; t += MINUTE) {
-    const z = zonedParts(new Date(t), timeZone);
+    const z = zonedParts(fmt, new Date(t));
     if (!fields.minute.includes(z.minute)) continue;
     if (!fields.hour.includes(z.hour)) continue;
     if (!fields.month.includes(z.month)) continue;
@@ -54,16 +66,8 @@ function parseField(raw: string, min: number, max: number): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-function zonedParts(date: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    minute: "numeric",
-    hour: "numeric",
-    day: "numeric",
-    month: "numeric",
-    weekday: "short",
-    hourCycle: "h23",
-  }).formatToParts(date);
+function zonedParts(fmt: Intl.DateTimeFormat, date: Date) {
+  const parts = fmt.formatToParts(date);
   const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value;
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(get("weekday") ?? "");
   return {

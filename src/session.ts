@@ -4,7 +4,7 @@
  *
  * Key design choice: prompts are fired *without* awaiting the turn, so the
  * gateway's poll loop never blocks on a running agent — that's what keeps
- * steering/follow-up (a message arriving mid-turn) possible (plan §12).
+ * steering (a message arriving mid-turn) possible (plan §12).
  *
  * M2: a Session either opens an existing pi session file (resume, preserving
  * context across restarts) or creates a fresh one; `onFinalized` lets the
@@ -27,7 +27,7 @@ import type { Writer } from "./writer.ts";
 
 type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
-// Full coding-agent toolset; the workspace is isolated per route.
+// Full coding-agent toolset; all routes share the agent's home working directory.
 const AGENT_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 
 // tg_send_* tools → the chat action shown while they run.
@@ -60,6 +60,7 @@ export interface SessionOptions {
 export class Session {
   private busy = false;
   private voiceMode = false;
+  private spokeThisTurn = false; // set if the agent sent a voice note via tg_send_voice this turn
   private readonly unsubscribe: () => void;
   private readonly log: ReturnType<typeof rootLog.child>;
   private readonly onFinalized?: (text: string | undefined) => void;
@@ -95,9 +96,19 @@ export class Session {
       ? SessionManager.open(opts.sessionFile)
       : SessionManager.create(opts.workspaceDir);
     const customNames = (opts.customTools ?? []).map((t) => t.name);
+    // Installed pi extensions register their tools at load time, but `tools` is a
+    // hard allowlist — any name it omits is dropped, so without this the agent
+    // can never call anything an installed extension provides (its hooks still
+    // run; only its tools were being filtered out). Enumerate them from the
+    // already-reloaded resource loader and allow them through, per docs/sdk.md:
+    // "If you pass `tools`, include each custom or extension tool name you want
+    // enabled." Keeping the allowlist (vs dropping it) preserves grep/find/ls,
+    // which are otherwise inactive by default.
+    const extensionNames = (opts.resourceLoader?.getExtensions().extensions ?? []).flatMap((e) => [...e.tools.keys()]);
     const { session } = await createAgentSession({
       cwd: opts.workspaceDir,
-      tools: [...AGENT_TOOLS, ...customNames], // `tools` is an allowlist over ALL tools, incl. custom
+      // Allowlist over ALL tools: built-in coding tools, our custom tg_* tools, and installed-extension tools.
+      tools: [...new Set([...AGENT_TOOLS, ...customNames, ...extensionNames])],
       customTools: opts.customTools,
       sessionManager,
       resourceLoader: opts.resourceLoader,
@@ -129,6 +140,7 @@ export class Session {
   private onEvent(event: Parameters<Parameters<PiSession["subscribe"]>[0]>[0]) {
     switch (event.type) {
       case "agent_start":
+        this.spokeThisTurn = false;
         this.renderer.onAgentStart();
         break;
       case "message_update": {
@@ -140,6 +152,7 @@ export class Session {
       case "tool_execution_start": {
         // tg_send_* → a media chat action ("uploading…"); other tg_* (react/ask) → nothing.
         // Non-tg tools → the in-draft "🔧 …" status line.
+        if (event.toolName === "tg_send_voice") this.spokeThisTurn = true; // don't also auto-speak
         const media = MEDIA_ACTION[event.toolName];
         if (media) this.renderer.setMediaAction(media);
         else if (!event.toolName.startsWith("tg_")) this.renderer.onToolStart(event.toolName, event.args);
@@ -150,15 +163,19 @@ export class Session {
         this.renderer.onToolEnd();
         break;
       case "queue_update":
-        this.renderer.setQueueDepth(event.steering.length + event.followUp.length);
+        this.renderer.setQueueDepth(event.steering.length);
         break;
       case "agent_settled": {
         const finalText = this.agent.getLastAssistantText();
         this.renderer.onSettled(finalText);
         this.busy = false;
-        this.onFinalized?.(finalText);
-        // Voice mode: speak the answer as a voice note.
-        if (this.voiceMode && this.voice && finalText && finalText.trim() !== "") void this.speak(finalText);
+        // A voice-only turn's text is spoken, never rendered to Telegram — don't
+        // record it as the last-rendered answer, or reconcile would suppress the
+        // legitimate text repost if we crash before the voice note is sent.
+        this.onFinalized?.(this.voiceMode ? undefined : finalText);
+        // Voice mode: speak the answer as a voice note — unless the agent already
+        // sent one itself via tg_send_voice, which would double up.
+        if (this.voiceMode && this.voice && !this.spokeThisTurn && finalText && finalText.trim() !== "") void this.speak(finalText);
         break;
       }
       default:
@@ -170,22 +187,17 @@ export class Session {
    * Route an inbound prompt (§12):
    *  - idle → prompt (react 👀)
    *  - running → steer into the current turn (react ⚡)
-   *  - followUp (">") → queue until the agent fully stops (react 👀)
    *
    * `speak` sets the reply modality for the turn: true → voice-only reply
    * (matches a voice message in), false → normal text reply.
    */
-  async handlePrompt(text: string, opts?: { images?: ImageContent[]; messageId?: number; followUp?: boolean; speak?: boolean }) {
+  async handlePrompt(text: string, opts?: { images?: ImageContent[]; messageId?: number; speak?: boolean }) {
     const images = opts?.images;
     if (opts?.messageId !== undefined) {
       if (this.turn) this.turn.messageId = opts.messageId; // for tg_react
       this.messageLog?.add(opts.messageId, "user", text); // for the context-injected id table
     }
 
-    if (opts?.followUp) {
-      await this.agent.followUp(text, images);
-      return;
-    }
     if (this.busy) {
       this.log.info("steering into running turn");
       await this.agent.steer(text, images);
@@ -195,7 +207,7 @@ export class Session {
     this.voiceMode = opts?.speak ?? false; // reply modality matches the input
     this.renderer.setVoiceMode(this.voiceMode);
     // Do NOT await: the turn streams via the event subscription; the poll loop
-    // must stay free to deliver steering/follow-up messages.
+    // must stay free to deliver steering messages.
     void this.agent
       .prompt(text, images ? { images } : undefined)
       .catch((e) => {
@@ -232,6 +244,7 @@ export class Session {
 
   dispose() {
     this.unsubscribe();
+    this.renderer.stop(); // clear heartbeat/chat-action/flush timers if a turn was live
     this.agent.dispose();
   }
 }

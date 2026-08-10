@@ -1,5 +1,9 @@
 # pilegram
 
+<p align="center">
+  <img src="assets/logo.png" alt="pilegram" width="200">
+</p>
+
 A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegram.
 
 ## Features
@@ -14,8 +18,7 @@ A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegra
   come back as voice notes synthesized with **Supertonic** (in-process ONNX). Text
   always available as a fallback.
 - **Reactions**: the agent can react to your messages instead of replying in text.
-- **Steering**: a message sent mid-turn is injected into the running turn; prefix
-  with `>` to queue it as a follow-up instead.
+- **Steering**: a message sent mid-turn is injected into the running turn.
 - **Rich inbound handling**: replies/quotes, forwards, edited messages, stickers,
   locations, contacts, polls, dice.
 
@@ -99,7 +102,7 @@ flag — argv is visible in `ps`). Everything else is a **CLI flag** (`--help`):
 | Flag | Required | Default | Notes |
 |---|---|---|---|
 | `--allow <ids>` | ✅ | — | comma-separated Telegram user ids; everyone else is dropped silently |
-| `--state-dir <path>` | | `$XDG_CONFIG_HOME/pilegram` (else `~/.config/pilegram`) | SQLite db + conversation workspaces |
+| `--state-dir <path>` | | `$XDG_CONFIG_HOME/pilegram` (else `~/.config/pilegram`) | SQLite db |
 | `--models-dir <path>` | | `$XDG_CACHE_HOME/pilegram` (else `~/.cache/pilegram`) | downloaded speech models (~2 GB cache) |
 | `--db-path <path>` | | `<state-dir>/pilegram.db` | override the db path |
 | `--whisper-model <name>` | | `large-v3-turbo` | whisper.cpp ggml model (e.g. `base.en` for a fast/small English-only start) |
@@ -107,3 +110,16 @@ flag — argv is visible in `ps`). Everything else is a **CLI flag** (`--help`):
 | `--tz <zone>` | | `Europe/Stockholm` | local time shown to the agent |
 | `--poll-timeout <sec>` | | `30` | long-poll seconds |
 | `--log-level <level>` | | `info` | `debug`\|`info`\|`warn`\|`error` |
+
+## Trust model
+
+pilegram is single-user by design. Only the Telegram user ids in `--allow` are
+served; every other update is logged and dropped.
+
+The agent runs with **full trust and no approval gate** — it runs shell commands,
+reads and writes files, and sends messages on your behalf without asking. It runs
+as *your* user, with the same filesystem and network access you have: its working
+directory is your home directory, **not a sandbox**, and tools such as
+`tg_send_document` accept absolute paths. Only `--allow` ids you
+trust to drive an unsandboxed agent, and run pilegram as a dedicated,
+least-privileged user (or in a container) if that reach concerns you.

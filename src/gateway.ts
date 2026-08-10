@@ -68,6 +68,14 @@ export class Gateway {
 
     this.running = true;
     this.loopDone = this.pollLoop();
+    // Reaching this catch means the poll loop threw (e.g. 409 Conflict — another
+    // poller owns this bot); a normal shutdown resolves loopDone instead. Exit so
+    // the supervisor restarts us, rather than lingering as a live process that no
+    // longer polls (the scheduler's interval would otherwise keep us alive, deaf).
+    this.loopDone.catch((e) => {
+      log.error("poll loop crashed — exiting", errFields(e));
+      process.exit(1);
+    });
   }
 
   private async registerCommands() {
@@ -182,6 +190,11 @@ export class Gateway {
       if (msg.forum_topic_edited.name) this.router.setName(route, msg.forum_topic_edited.name);
       return;
     }
+    if (msg.forum_topic_closed) {
+      // Free the live session; it resumes from its session file if reopened.
+      this.router.suspend(route);
+      return;
+    }
 
     // --- albums: buffer by media_group_id and flush once (§9) ---
     if (!isEdit && msg.media_group_id && (msg.photo || msg.document)) {
@@ -198,9 +211,7 @@ export class Gateway {
         await session.abort();
         return;
       }
-      const followUp = trimmed.startsWith(">"); // ">" → queue as a follow-up (§12)
-      const body = followUp ? trimmed.slice(1).trim() : msg.text;
-      await session.handlePrompt(prefix + body, { messageId: msg.message_id, followUp });
+      await session.handlePrompt(prefix + msg.text, { messageId: msg.message_id });
       return;
     }
 
@@ -271,7 +282,7 @@ export class Gateway {
       const msg = e instanceof Error ? e.message : String(e);
       log.warn("media ingest failed", errFields(e));
       const hint = /too large|too big|file_path/i.test(msg)
-        ? "That file is too large for the Bot API (20MB limit) — drop it into the workspace directly."
+        ? "That file is too large for the Bot API (20MB limit) — drop it into the working directory directly."
         : `Couldn't read that attachment: ${msg}`;
       await session.notify(`⚠️ ${hint}`);
     }

@@ -12,7 +12,7 @@
 import { DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Api } from "grammy";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { homedir } from "node:os";
 import type { Config } from "./config.ts";
 import { contextExtension, MessageLog } from "./context.ts";
 import type { Db } from "./db.ts";
@@ -76,14 +76,16 @@ export class Router {
   private async build(route: Route, opts?: { name?: string }): Promise<Session> {
     const { chatId } = route;
     const threadId = route.threadId ?? 0;
-    const key = routeKey(route);
 
     const prior = this.db.getRoute(chatId, threadId);
     this.db.ensureRoute(chatId, threadId, opts?.name ?? prior?.name ?? null);
 
     const reopen = prior?.sessionFile ?? undefined;
     const writer = new Writer(this.api, route);
-    const workspace = join(this.config.stateDir, "workspaces", key);
+    // Every route shares the agent's home directory as its working directory —
+    // there's no per-route workspace isolation. Each route still gets its own pi
+    // session (persisted via session_file); only the filesystem cwd is shared.
+    const workspace = homedir();
     const turn: TurnRef = {}; // shared current-message pointer for tg_react
     const messageLog = new MessageLog(); // rolling message-id table for context injection (§15)
     const isTopic = threadId !== 0;
@@ -224,6 +226,20 @@ export class Router {
     this.db.setRouteName(route.chatId, route.threadId ?? 0, name);
     const s = this.sessions.get(routeKey(route));
     if (s) s.setName(name);
+  }
+
+  /**
+   * Drop the in-memory session (e.g. its topic was closed) without ending the
+   * route. It rebuilds and resumes from its persisted session file the next time
+   * a message or scheduled task arrives, so context is preserved on reopen.
+   */
+  suspend(route: Route) {
+    const key = routeKey(route);
+    const s = this.sessions.get(key);
+    if (!s) return;
+    s.dispose();
+    this.sessions.delete(key);
+    log.info("session suspended (topic closed)", { route: key });
   }
 
   /** End a route (/end or topic deleted): dispose + mark ended. */
