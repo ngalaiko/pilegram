@@ -12,7 +12,7 @@ import { InputFile } from "grammy";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { Type } from "@sinclair/typebox";
-import type { Db } from "./db.ts";
+import type { Db, RouteRow } from "./db.ts";
 import { guessMime, sha256 } from "./media.ts";
 import { type QuestionRegistry, renderQuestionKeyboard } from "./questions.ts";
 import type { Route, TurnRef } from "./route.ts";
@@ -319,6 +319,31 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     },
   });
 
+  const listTopics = defineTool({
+    name: "tg_list_topics",
+    label: "List Topics",
+    description:
+      "List Telegram topics/threads in this chat that pilegram knows about, including thread ids needed for safe cleanup. " +
+      "This is based on topics the gateway has seen or created, not Telegram's full server-side topic list. Never delete the General thread; scheduled-task topics are marked.",
+    promptSnippet: "tg_list_topics() — list known Telegram topics/threads in this chat",
+    parameters: Type.Object({}),
+    async execute() {
+      const scheduled = new Map<number, string[]>();
+      for (const task of ctx.db.listScheduledTasks()) {
+        if (task.taskChatId !== ctx.route.chatId) continue;
+        const titles = scheduled.get(task.taskThreadId) ?? [];
+        titles.push(task.title);
+        scheduled.set(task.taskThreadId, titles);
+      }
+      const routes = ctx.db
+        .listActiveRoutes()
+        .filter((r) => r.chatId === ctx.route.chatId)
+        .sort((a, b) => a.threadId - b.threadId);
+      const lines = routes.map((r) => formatTopicRoute(r, scheduled.get(r.threadId) ?? []));
+      return { content: [{ type: "text" as const, text: lines.length ? lines.join("\n\n") : "No known topics for this chat." }], details: {} };
+    },
+  });
+
   const deleteTopic = defineTool({
     name: "tg_delete_topic",
     label: "Delete Topic",
@@ -490,6 +515,7 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
     editMessage,
     deleteMessage,
     createTopic,
+    listTopics,
     deleteTopic,
     setTopic,
     scheduleCreate,
@@ -534,6 +560,22 @@ export function buildRouteTools(ctx: RouteToolContext): ToolDefinition[] {
   }
 
   return tools;
+}
+
+function formatTopicRoute(route: RouteRow, scheduledTitles: string[]): string {
+  const title = route.threadId === 0 ? "General" : route.name || "(untitled)";
+  const kind = route.threadId === 0 ? "General" : "topic";
+  return [
+    `thread_id: ${route.threadId}`,
+    `title: ${title}`,
+    `kind: ${kind}`,
+    route.icon ? `icon: ${route.icon}` : undefined,
+    `status: ${route.status}`,
+    `updated_at: ${new Date(route.updatedAt).toISOString()}`,
+    scheduledTitles.length ? `scheduled_tasks: ${scheduledTitles.join(", ")}` : undefined,
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }
 
 function formatTask(task: {

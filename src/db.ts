@@ -73,6 +73,8 @@ export interface RouteRow {
   status: "active" | "ended";
   lastRenderedSig: string | null;
   icon: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 interface RouteDbRow {
@@ -83,6 +85,8 @@ interface RouteDbRow {
   status: string;
   last_rendered_sig: string | null;
   icon: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface ScheduledTaskRow {
@@ -130,6 +134,8 @@ function toRouteRow(r: RouteDbRow): RouteRow {
     status: r.status === "ended" ? "ended" : "active",
     lastRenderedSig: r.last_rendered_sig,
     icon: r.icon,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   };
 }
 
