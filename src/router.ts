@@ -10,7 +10,7 @@
  */
 
 import { DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { Api } from "grammy";
+import { GrammyError, type Api } from "grammy";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import type { Config } from "./config.ts";
@@ -188,7 +188,12 @@ export class Router {
   /** Permanently delete a topic and dispose its associated agent session. */
   async deleteTopic(chatId: number, threadId: number): Promise<void> {
     if (!Number.isSafeInteger(threadId) || threadId <= 0) throw new Error("provide a valid non-General topic thread id");
-    await this.api.deleteForumTopic(chatId, threadId);
+    try {
+      await this.api.deleteForumTopic(chatId, threadId);
+    } catch (e) {
+      if (!isMissingTopic(e)) throw e;
+      log.warn("topic already missing while deleting; marking route ended", { chatId, threadId, ...errFields(e) });
+    }
     this.endRoute({ chatId, threadId });
   }
 
@@ -263,4 +268,10 @@ function cleanTopicName(raw: string): string {
   const name = raw.replace(/\s+/g, " ").trim();
   if (name.length < 1 || name.length > 128) throw new Error("topic name must be 1-128 characters");
   return name;
+}
+
+function isMissingTopic(e: unknown): boolean {
+  if (!(e instanceof GrammyError)) return false;
+  if (e.error_code !== 400) return false;
+  return /TOPIC_ID_INVALID|thread|topic|message thread/i.test(e.description ?? "");
 }
