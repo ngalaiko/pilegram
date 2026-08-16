@@ -130,8 +130,8 @@ export class Writer {
     );
   }
 
-  editText(messageId: number, text: string): Promise<unknown> {
-    return this.enqueue("editMessageText", () => this.api.editMessageText(this.route.chatId, messageId, text));
+  editText(messageId: number, text: string, extra?: Fields): Promise<unknown> {
+    return this.enqueue("editMessageText", () => this.api.editMessageText(this.route.chatId, messageId, text, { ...(extra as object) }));
   }
 
   deleteMessage(messageId: number): Promise<true> {

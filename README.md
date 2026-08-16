@@ -8,7 +8,7 @@ A personal [pi](https://github.com/earendil-works/pi) coding agent, over Telegra
 
 ## Features
 
-- **Streaming replies** via Telegram message drafts (animated, then finalized).
+- **Streaming replies** via an editable provisional message, so you can still send `/stop` or steer the agent mid-turn.
 - **Topics = sessions**: each Telegram topic is its own agent session with its own
   workspace and context. The agent can list known threads, create threads, and,
   after explicit confirmation, delete them; it also keeps each topic's **title and
