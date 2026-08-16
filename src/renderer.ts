@@ -1,19 +1,17 @@
 /**
  * Renderer — the draft state machine (plan §3–§5).
  *
- *   idle ──agent_start──▶ running (new draft_id, acc="", empty draft = "Thinking…")
- *   running ──thinking delta──▶ shown live in the draft (💭), dropped once the answer starts
- *   running ──text delta──▶ acc += delta; coalesced flush (~250ms)
- *   running ──heartbeat (20s)──▶ re-send same draft (drafts TTL out at ~30s)
- *   running ──tool start/end──▶ in-draft status line + per-turn tool tally
- *   running ──agent_settled──▶ persist final text (+ tool summary) via sendMessage
+ *   idle ──agent_start──▶ running (acc="", no preview yet)
+ *   running ──thinking/text/tool delta──▶ editable provisional message (~250ms)
+ *   running ──agent_settled──▶ replace provisional message with final text
  *
- * §4 Thinking: drafts are ephemeral, and so is thinking — they belong together.
- * The user watches the model think in real time; the persisted message holds
- * only the answer (unless think mode is "keep").
+ * The preview deliberately uses an ordinary editable message rather than
+ * sendMessageDraft. Native Telegram drafts can disable the compose/send control
+ * on mobile clients, which prevents the user from steering or sending /stop.
+ * Thinking remains ephemeral: a thinking-only preview is deleted on settle.
  *
- * §5 Tools: never one message per tool call. Status lives in the draft (and
- * evaporates on finalize); a compact summary is appended to the final message.
+ * §5 Tools: never one message per tool call. Status lives in the provisional
+ * preview (and evaporates on finalize); a compact summary is appended to the final message.
  *
  * All verified against the live API (see telegram-draft-semantics): finalize on
  * agent_settled (not agent_end — which may auto-retry), heartbeat unconditionally.
@@ -37,13 +35,12 @@ export class Renderer {
   private running = false;
   private acc = "";
   private statusLine?: string;
-  private draftCounter = 0;
-  private currentDraftId = 0;
   private flushTimer?: ReturnType<typeof setTimeout>;
   private heartbeat?: ReturnType<typeof setInterval>;
   private actionTimer?: ReturnType<typeof setInterval>;
   private mediaAction?: string; // e.g. upload_photo, set while a tg_send_* tool runs
   private lastFlushAt = 0;
+  private preview?: { id?: number; starting?: Promise<{ message_id: number }>; latestText: string };
 
   // §4 thinking — opinionated: always streamed live in the draft, never persisted
   private thinkingAcc = "";
@@ -78,14 +75,11 @@ export class Renderer {
     this.toolCounts.clear();
     this.turnStartAt = Date.now();
     this.queueDepth = 0;
-    this.currentDraftId = ++this.draftCounter;
+    this.preview = undefined;
     this.mediaAction = undefined;
     this.heartbeat = setInterval(() => this.flushNow(), HEARTBEAT_MS);
-    // Do NOT open a draft yet: a draft can't be deleted (only TTLs out ~30s or is
-    // replaced by sendMessage), so an eager empty draft would linger on turns that
-    // produce no text (e.g. a pure tg_react). We draft only once there's content.
-    // Meanwhile a chat action ("typing"/"record_voice"/…) shows activity — it
-    // auto-expires, so it never lingers.
+    // Do not create a preview until there is content. A pure tg_react should
+    // show only the short-lived chat action, not leave a visible message behind.
     this.actionTimer = setInterval(() => this.pushChatAction(), 4000);
     this.pushChatAction();
   }
@@ -153,6 +147,8 @@ export class Renderer {
     const counts = new Map(this.toolCounts);
     const elapsedMs = this.turnStartAt ? Date.now() - this.turnStartAt : 0;
 
+    const preview = this.preview;
+    this.preview = undefined;
     this.clearTimers();
     this.running = false;
     this.acc = "";
@@ -164,12 +160,15 @@ export class Renderer {
     this.queueDepth = 0;
 
     if (this.voiceMode) {
-      // The Session sends this answer as a voice note; don't persist text.
+      // The Session sends this answer as a voice note; don't leave a provisional
+      // text message behind while it does so.
+      void this.deletePreview(preview);
       this.log.info("finalize: voice-only (text not persisted)");
       return;
     }
     if (answer.trim() === "") {
-      this.log.info("finalize: empty (draft self-expires)");
+      void this.deletePreview(preview);
+      this.log.info("finalize: empty (preview deleted)");
       return;
     }
 
@@ -179,8 +178,7 @@ export class Renderer {
     const total = [...counts.values()].reduce((a, b) => a + b, 0);
     if (total > 0) out += `\n\n${formatToolSummary(counts, elapsedMs)}`;
 
-    // Regular tier (§3): render markdown → Telegram HTML, block-chunked so a
-    // split never breaks a tag. Fall back to plain text if rendering throws.
+    // Render markdown → Telegram HTML, block-chunked so a split never breaks a tag.
     let chunks: string[];
     let extra: { parse_mode: "HTML" } | undefined;
     try {
@@ -191,8 +189,8 @@ export class Renderer {
       chunks = chunkText(out, MSG_MAX);
       extra = undefined;
     }
-    this.log.info("finalize", { chars: out.length, chunks: chunks.length, tools: total, html: !!extra });
-    for (const chunk of chunks) this.sendFinal(chunk, extra);
+    this.log.info("finalize", { chars: out.length, chunks: chunks.length, tools: total, html: !!extra, preview: !!preview });
+    void this.finalizePreview(preview, chunks, extra);
   }
 
   /**
@@ -220,6 +218,8 @@ export class Renderer {
   }
 
   onError(err: unknown) {
+    const preview = this.preview;
+    this.preview = undefined;
     this.clearTimers();
     this.running = false;
     this.acc = "";
@@ -228,6 +228,7 @@ export class Renderer {
     this.sawText = false;
     this.toolCounts.clear();
     this.queueDepth = 0;
+    void this.deletePreview(preview);
     const msg = err instanceof Error ? err.message : String(err);
     this.writer.persist(`⚠️ ${msg}`).catch((e) => this.log.error("error persist failed", errFields(e)));
   }
@@ -244,9 +245,69 @@ export class Renderer {
   private flushNow() {
     if (!this.running) return;
     const text = this.renderDraft();
-    if (text.trim() === "") return; // nothing to show yet — don't open a draft that would linger
+    if (text.trim() === "") return; // nothing to show yet — don't create a provisional message
     this.lastFlushAt = Date.now();
-    this.writer.sendDraft(this.currentDraftId, text).catch((e) => this.log.warn("draft flush failed", errFields(e)));
+
+    const preview = (this.preview ??= { latestText: text });
+    preview.latestText = text;
+    if (preview.id !== undefined) {
+      this.writer.editText(preview.id, text).catch((e) => this.log.warn("preview update failed", errFields(e)));
+      return;
+    }
+    if (preview.starting) return;
+
+    const initialText = text;
+    preview.starting = this.writer
+      .persist(initialText)
+      .then(async (message) => {
+        preview.id = message.message_id;
+        // Deltas can arrive while sendMessage is in flight; catch the preview up
+        // in one edit rather than sending another provisional message.
+        if (preview.latestText !== initialText) await this.writer.editText(message.message_id, preview.latestText);
+        return message;
+      })
+      .catch((e) => {
+        this.log.warn("preview start failed", errFields(e));
+        throw e;
+      });
+  }
+
+  private async deletePreview(preview: Renderer["preview"]) {
+    if (!preview) return;
+    try {
+      const message = preview.starting ? await preview.starting : undefined;
+      const id = preview.id ?? message?.message_id;
+      if (id !== undefined) await this.writer.deleteMessage(id);
+    } catch (e) {
+      this.log.warn("preview delete failed", errFields(e));
+    }
+  }
+
+  private async finalizePreview(preview: Renderer["preview"], chunks: string[], extra: { parse_mode: "HTML" } | undefined) {
+    if (!preview) {
+      for (const chunk of chunks) this.sendFinal(chunk, extra);
+      return;
+    }
+    try {
+      const message = preview.starting ? await preview.starting : undefined;
+      const id = preview.id ?? message?.message_id;
+      if (id === undefined) throw new Error("preview did not yield a message id");
+      const first = chunks[0]!;
+      try {
+        await this.writer.editText(id, first, extra);
+        this.onSent?.(id, first);
+      } catch (e) {
+        if (!extra) throw e;
+        this.log.warn("HTML preview finalize rejected; retrying as plain text", errFields(e));
+        const plain = htmlToPlain(first);
+        await this.writer.editText(id, plain);
+        this.onSent?.(id, plain);
+      }
+      for (const chunk of chunks.slice(1)) this.sendFinal(chunk, extra);
+    } catch (e) {
+      this.log.warn("preview finalize failed; sending standalone answer", errFields(e));
+      for (const chunk of chunks) this.sendFinal(chunk, extra);
+    }
   }
 
   private renderDraft(): string {
@@ -276,8 +337,11 @@ export class Renderer {
    * firing the heartbeat / chat-action intervals against a dead route forever.
    */
   stop() {
+    const preview = this.preview;
+    this.preview = undefined;
     this.clearTimers();
     this.running = false;
+    void this.deletePreview(preview);
   }
 
   private clearTimers() {
